@@ -1,16 +1,11 @@
-﻿using System;
+﻿using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Networking;
-using UnityEngine.UI;
 
-[System.Serializable]
-public class Client : MonoBehaviour
+public class Scoreboard : MonoBehaviour
 {
 
-    public InputField nameInput;
-    public GameObject inputField;
-    public GameObject registerBtn;
-    public GameObject connectBtn;
 
     public string host;
     public int port;
@@ -18,30 +13,21 @@ public class Client : MonoBehaviour
     public int channelID;
     public int connectionId;
 
-    public string userName;
+    string userName = "scoreboard";
 
     public void Connect()
     {
         byte error;
         connectionId = NetworkTransport.Connect(hostID, host, port, 0, out error);
-
-        registerBtn.SetActive(true);
-        inputField.SetActive(true);
-        connectBtn.SetActive(false);
     }
 
     public void Join()
     {
-        byte[] msg = Message.ObjectToByteArray(new Message(Message.MsgType.REGISTER, GetName()));
+        byte[] msg = Message.ObjectToByteArray(new Message(Message.MsgType.REGISTER, userName));
         byte error;
         NetworkTransport.Send(hostID, connectionId, channelID, msg, msg.Length, out error);
     }
 
-    private string GetName()
-    {
-        userName = nameInput.text;
-        return nameInput.text;
-    }
 
     public void Update()
     {
@@ -71,11 +57,11 @@ public class Client : MonoBehaviour
         switch (msg.type)
         {
             case Message.MsgType.QSTART:
-                
+
                 break;
 
             case Message.MsgType.ERROR:
-                
+
                 break;
 
             case Message.MsgType.SUCCESS:

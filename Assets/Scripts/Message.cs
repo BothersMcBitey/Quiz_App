@@ -13,28 +13,24 @@ public class Message : Object
         REGISTER,
         ANSWER,
         QSTART,
-        CONNUPDATE,
         STATE,
         ERROR,
-        DISCONNECT,
-        BADPORT
+        SUCCESS
     }
 
     public DateTime hitTime;
-    public int userID;
     public MsgType type;
     public string name;
-    public int port;
     public State state;
+    public bool isBuzzNotAB;
 
-    public Message(int userID, MsgType type, string name=null, int port=0, State state=null)
+    public Message(MsgType type, string name=null, int port=0, State state=null, bool isBuzzNotAB = true)
     {
-        this.userID = userID;
         this.type = type;
         this.name = name;
-        this.port = port;
         this.state = state;
-        
+        this.isBuzzNotAB = isBuzzNotAB;
+
         hitTime = DateTime.Now.ToUniversalTime();       
     }
 
@@ -45,13 +41,9 @@ public class Message : Object
 
     public override string ToString()
     {
-        string s = userID + ", " + hitTime.ToLongTimeString() + "." + hitTime.Millisecond + ", " + type.ToString() + ", ";
+        string s = hitTime.ToLongTimeString() + "." + hitTime.Millisecond + ", " + type.ToString() + ", ";
         switch (type)
         {
-            case MsgType.CONNUPDATE:
-                s += port;
-                break;
-
             case MsgType.REGISTER:
                 s += name;
                 break;

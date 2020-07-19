@@ -1,203 +1,128 @@
 ﻿using System;
-using System.Text;
 using System.Linq;
-using System.Collections;
 using System.Collections.Generic;
-using System.Net;
-using System.Net.Sockets;
-using System.Threading;
 using UnityEngine;
-using System.IO;
-using System.Runtime.Serialization.Formatters.Binary;
+using UnityEngine.Networking;
+#pragma warning disable CS0618 // Type or member is obsolete
 
-[System.Serializable]
+[Serializable]
 public class Server : MonoBehaviour
 {
-
-    private class ClientConnection
+    [Serializable]
+    public class Client
     {
-        public Socket listener;
-        public int clientId;
-        public int port;
-        public Thread handler;
-        public string clientName;
+        public int connectionID;
+        public string userName;
+        public int score;
 
-        public ClientConnection(Socket s, int id, Thread t, string n, int p)
+        public Client(int connID, string uName)
         {
-            listener = s;
-            clientId = id;
-            handler = t;
-            clientName = n;
-            port = p;
+            connectionID = connID;
+            userName = uName;
+            score = 0;
         }
     }
 
-    private Socket listener;
-    private List<ClientConnection> clients;
-    private Thread listen;
+    public List<Client> clients;
+    public List<Message> buzzers;
+    public bool isBuzzEnabled = false;
+    public List<Message> answers;
+    public bool isAnswerEnabled = false;
 
-    private IPAddress hostip;
-    public int nextPort;
-    private int nextClientID = 1;
+    public int channelID;
+    public int hostID;
 
     private void Awake()
     {
-        clients = new List<ClientConnection>();
+        NetworkTransport.Init();
 
-        IPHostEntry ipHost = Dns.GetHostEntry(Dns.GetHostName());
-        hostip = ipHost.AddressList.Where(x => x.AddressFamily == AddressFamily.InterNetwork).First();
-        IPEndPoint localEndPoint = new IPEndPoint(hostip, nextPort++);
+        ConnectionConfig config = new ConnectionConfig();
+        channelID = config.AddChannel(QosType.Reliable);
+        HostTopology topology = new HostTopology(config, 20);
 
-        Debug.Log(localEndPoint.ToString());
-
-        listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        try
-        {
-            listener.Bind(localEndPoint);
-
-            ThreadStart listenStart = new ThreadStart(RegisterListen);
-            listen = new Thread(listenStart);
-            listen.Start();
-        }
-        catch (Exception e)
-        {
-            Debug.Log(e);          
-        }
-    }
-
-    public static Message RecieveMessage(Socket socket)
-    {
-        byte[] packet = new byte[0];
-        byte[] buffer = new byte[1024];
-        int numByte = 1024;
-        while (numByte == 1024)
-        {
-            numByte = socket.Receive(buffer);
-
-            packet = packet.Concat(buffer).ToArray();
-        }
-
-        return Message.ByteArrayToMessage(packet);
-    }
-
-    void RegisterListen()
-    {
-        listener.Listen(10);
-
-        while (true)
-        {
-            Debug.Log("Waiting for REGISTER connection ... ");
-
-            Socket clientSocket = listener.Accept();
-
-            // Data buffer 
-            Message msg = RecieveMessage(clientSocket);
-
-            Debug.Log(msg.ToString());
-
-            if(msg.type == Message.MsgType.REGISTER)
-            {
-                RegisterClient(msg, clientSocket);
-            }
-            else
-            {
-                clientSocket.Send(Message.ObjectToByteArray(new Message(0, Message.MsgType.BADPORT)));
-            }
-
-            clientSocket.Shutdown(SocketShutdown.Both);
-            clientSocket.Close();
-        }
-    }
-
-    void ClientListen(Socket listener, int clientID)
-    {
-        listener.Listen(1);
-
-        while (true)
-        {
-            Debug.Log("Waiting for Client"+clientID+" connection ... ");
-
-            Socket clientSocket = listener.Accept();
-
-            Debug.Log("Client " + clientID + " successfully connected");
-
-            bool connected = true;
-            while (connected)
-            {
-
-                // Data buffer 
-                Message msg = RecieveMessage(clientSocket);
-
-                Debug.Log(msg.ToString());
-
-                if (msg.userID != clientID)
-                {
-                    connected = false;
-                    clientSocket.Send(Message.ObjectToByteArray(new Message(0, Message.MsgType.BADPORT)));
-                }
-
-                if (msg.type == Message.MsgType.DISCONNECT)
-                {
-                    connected = false;
-                }
-                else
-                {
-                    clientSocket.Send(Message.ObjectToByteArray(new Message(0, Message.MsgType.ERROR)));
-                }
-            }
-
-            Debug.Log("Client disconnected from handler " + clientID);
-
-            clientSocket.Shutdown(SocketShutdown.Both);
-            clientSocket.Close();
-        }
-    }
-
-    void RegisterClient(Message msg, Socket client)
-    {
-        if (0 < clients.Count(x => x.clientName.Equals(msg.name)))
-        {
-            ClientConnection cc = clients.First(x => x.clientName.Equals(msg.name));
-
-            client.Send(Message.ObjectToByteArray(new Message(cc.clientId, Message.MsgType.CONNUPDATE, port: cc.port)));
-        }
-        else
-        {
-            int clientPort = nextPort++;
-            int clientID = nextClientID++;
-            IPEndPoint localEndPoint = new IPEndPoint(hostip, clientPort);
-            Socket listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-
-            try
-            {
-                listener.Bind(localEndPoint);
-
-                ThreadStart clientStart = new ThreadStart(() => ClientListen(listener, clientID));
-                Thread clientHandle = new Thread(clientStart);
-                clientHandle.Start();
-
-                client.Send(Message.ObjectToByteArray(new Message(clientID, Message.MsgType.CONNUPDATE, port: clientPort)));
-
-                clients.Add(new ClientConnection(listener, clientID, clientHandle, msg.name, clientPort));
-            }
-            catch (Exception e)
-            {
-                Debug.Log(e);
-            }
-        }
-    }
-
-    
-
-    // Start is called before the first frame update
-    void Start()
-    {
-        
-    }
+        hostID = NetworkTransport.AddHost(topology, 12345);       
+    }    
 
     // Update is called once per frame
     void Update()
     {
-        
+        int recHostId;
+        int connectionId;
+        int channelId;
+        byte[] recBuffer = new byte[1024];
+        int bufferSize = 1024;
+        int dataSize;
+        byte error;
+        NetworkEventType recData = NetworkTransport.Receive(out recHostId, out connectionId, out channelId, recBuffer, bufferSize, out dataSize, out error);
+        switch (recData)
+        {
+            case NetworkEventType.ConnectEvent:
+                Debug.Log("Client Connected on " + connectionId);
+                break;
+
+            case NetworkEventType.DataEvent:
+                Message msg = Message.ByteArrayToMessage(recBuffer);
+                Debug.Log(msg);
+                HandleMessage(msg, connectionId);
+                break;
+
+            case NetworkEventType.DisconnectEvent:
+                Debug.Log("Client Disconnected");
+                break;
+        }
+    }
+
+    private void HandleMessage(Message msg, int connectionID)
+    {
+        switch (msg.type)
+        {
+            case Message.MsgType.REGISTER:
+                if(0 < clients.Where(x => x.userName.Equals(msg.name)).Count())
+                {
+                    Send(new Message(Message.MsgType.ERROR), connectionID);
+                }
+                else
+                {
+                    clients.Add(new Client(connectionID, msg.name));
+                    Send(new Message(Message.MsgType.SUCCESS), connectionID);
+                    Debug.Log("Client " + msg.name + " registered on connection " + connectionID);
+                }
+                break;
+
+            case Message.MsgType.BUZZ:
+                if (isBuzzEnabled)
+                {
+                    if(buzzers.Where(x => x.name.Equals(msg.name)).Count() < 1)
+                    {
+                        buzzers.Add(msg);
+                    }
+                    else
+                    {
+                        Send(new Message(Message.MsgType.ERROR), connectionID);
+                    }
+                }
+                break;
+
+            case Message.MsgType.ANSWER:
+                if (isAnswerEnabled)
+                {
+                    if (answers.Where(x => x.name.Equals(msg.name)).Count() < 1)
+                    {
+                        answers.Add(msg);
+                    }
+                    else
+                    {
+                        Send(new Message(Message.MsgType.ERROR), connectionID);
+                    }
+                }
+                break;
+        }
+    }
+
+    public void Send(Message msg, int connectionID)
+    {
+        byte[] buffer = Message.ObjectToByteArray(msg);
+        byte error;
+        NetworkTransport.Send(hostID, connectionID, channelID, buffer, buffer.Length, out error);
     }
 }
