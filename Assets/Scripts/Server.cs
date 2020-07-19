@@ -10,26 +10,52 @@ using UnityEngine;
 using System.IO;
 using System.Runtime.Serialization.Formatters.Binary;
 
+[System.Serializable]
 public class Server : MonoBehaviour
 {
 
+    private class ClientConnection
+    {
+        public Socket listener;
+        public int clientId;
+        public int port;
+        public Thread handler;
+        public string clientName;
+
+        public ClientConnection(Socket s, int id, Thread t, string n, int p)
+        {
+            listener = s;
+            clientId = id;
+            handler = t;
+            clientName = n;
+            port = p;
+        }
+    }
+
     private Socket listener;
+    private List<ClientConnection> clients;
     private Thread listen;
+
+    private IPAddress hostip;
+    public int nextPort;
+    private int nextClientID = 1;
 
     private void Awake()
     {
+        clients = new List<ClientConnection>();
+
         IPHostEntry ipHost = Dns.GetHostEntry(Dns.GetHostName());
-        IPAddress ipAddr = ipHost.AddressList.Where(x => x.AddressFamily == AddressFamily.InterNetwork).First();
-        IPEndPoint localEndPoint = new IPEndPoint(ipAddr, 12345);
+        hostip = ipHost.AddressList.Where(x => x.AddressFamily == AddressFamily.InterNetwork).First();
+        IPEndPoint localEndPoint = new IPEndPoint(hostip, nextPort++);
 
         Debug.Log(localEndPoint.ToString());
 
-        listener = new Socket(AddressFamily.InterNetwork, SocketType.Rdm, ProtocolType.Tcp);
+        listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         try
         {
             listener.Bind(localEndPoint);
 
-            ThreadStart listenStart = new ThreadStart(Listener);
+            ThreadStart listenStart = new ThreadStart(RegisterListen);
             listen = new Thread(listenStart);
             listen.Start();
         }
@@ -39,50 +65,129 @@ public class Server : MonoBehaviour
         }
     }
 
-    void Listener()
+    public static Message RecieveMessage(Socket socket)
+    {
+        byte[] packet = new byte[0];
+        byte[] buffer = new byte[1024];
+        int numByte = 1024;
+        while (numByte == 1024)
+        {
+            numByte = socket.Receive(buffer);
+
+            packet = packet.Concat(buffer).ToArray();
+        }
+
+        return Message.ByteArrayToMessage(packet);
+    }
+
+    void RegisterListen()
     {
         listener.Listen(10);
 
         while (true)
         {
-            Debug.Log("Waiting connection ... ");
+            Debug.Log("Waiting for REGISTER connection ... ");
 
             Socket clientSocket = listener.Accept();
 
             // Data buffer 
-            List<ArraySegment<byte>> buffer = new List<ArraySegment<byte>>();
-
-            int numByte = clientSocket.Receive(buffer);
-
-            byte[] x = new byte[0];
-            foreach(ArraySegment<byte> seg in buffer){
-                x = x.Concat(seg).ToArray();
-            }
-
-            Message msg = ByteArrayToMessage(x);
+            Message msg = RecieveMessage(clientSocket);
 
             Debug.Log(msg.ToString());
 
-            // Close client Socket using the 
-            // Close() method. After closing, 
-            // we can use the closed Socket  
-            // for a new Client Connection 
+            if(msg.type == Message.MsgType.REGISTER)
+            {
+                RegisterClient(msg, clientSocket);
+            }
+            else
+            {
+                clientSocket.Send(Message.ObjectToByteArray(new Message(0, Message.MsgType.BADPORT)));
+            }
+
             clientSocket.Shutdown(SocketShutdown.Both);
             clientSocket.Close();
         }
     }
 
-    public static Message ByteArrayToMessage(byte[] arrBytes)
+    void ClientListen(Socket listener, int clientID)
     {
-        using (var memStream = new MemoryStream())
+        listener.Listen(1);
+
+        while (true)
         {
-            var binForm = new BinaryFormatter();
-            memStream.Write(arrBytes, 0, arrBytes.Length);
-            memStream.Seek(0, SeekOrigin.Begin);
-            var obj = binForm.Deserialize(memStream);
-            return (Message) obj;
+            Debug.Log("Waiting for Client"+clientID+" connection ... ");
+
+            Socket clientSocket = listener.Accept();
+
+            Debug.Log("Client " + clientID + " successfully connected");
+
+            bool connected = true;
+            while (connected)
+            {
+
+                // Data buffer 
+                Message msg = RecieveMessage(clientSocket);
+
+                Debug.Log(msg.ToString());
+
+                if (msg.userID != clientID)
+                {
+                    connected = false;
+                    clientSocket.Send(Message.ObjectToByteArray(new Message(0, Message.MsgType.BADPORT)));
+                }
+
+                if (msg.type == Message.MsgType.DISCONNECT)
+                {
+                    connected = false;
+                }
+                else
+                {
+                    clientSocket.Send(Message.ObjectToByteArray(new Message(0, Message.MsgType.ERROR)));
+                }
+            }
+
+            Debug.Log("Client disconnected from handler " + clientID);
+
+            clientSocket.Shutdown(SocketShutdown.Both);
+            clientSocket.Close();
         }
     }
+
+    void RegisterClient(Message msg, Socket client)
+    {
+        if (0 < clients.Count(x => x.clientName.Equals(msg.name)))
+        {
+            ClientConnection cc = clients.First(x => x.clientName.Equals(msg.name));
+
+            client.Send(Message.ObjectToByteArray(new Message(cc.clientId, Message.MsgType.CONNUPDATE, port: cc.port)));
+        }
+        else
+        {
+            int clientPort = nextPort++;
+            int clientID = nextClientID++;
+            IPEndPoint localEndPoint = new IPEndPoint(hostip, clientPort);
+            Socket listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+
+            try
+            {
+                listener.Bind(localEndPoint);
+
+                ThreadStart clientStart = new ThreadStart(() => ClientListen(listener, clientID));
+                Thread clientHandle = new Thread(clientStart);
+                clientHandle.Start();
+
+                client.Send(Message.ObjectToByteArray(new Message(clientID, Message.MsgType.CONNUPDATE, port: clientPort)));
+
+                clients.Add(new ClientConnection(listener, clientID, clientHandle, msg.name, clientPort));
+            }
+            catch (Exception e)
+            {
+                Debug.Log(e);
+            }
+        }
+    }
+
+    
 
     // Start is called before the first frame update
     void Start()

@@ -1,20 +1,83 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
+using System.Runtime.Serialization.Formatters.Binary;
 
-public class Message
+[System.Serializable]
+public class Message : Object
 {
-    private DateTime hitTime;
-    private int userID;
+    public enum MsgType
+    {
+        BUZZ,
+        REGISTER,
+        ANSWER,
+        QSTART,
+        CONNUPDATE,
+        STATE,
+        ERROR,
+        DISCONNECT,
+        BADPORT
+    }
 
-    public Message(int userID)
+    public DateTime hitTime;
+    public int userID;
+    public MsgType type;
+    public string name;
+    public int port;
+    public State state;
+
+    public Message(int userID, MsgType type, string name=null, int port=0, State state=null)
     {
         this.userID = userID;
-        hitTime = DateTime.Now;
+        this.type = type;
+        this.name = name;
+        this.port = port;
+        this.state = state;
+        
+        hitTime = DateTime.Now.ToUniversalTime();       
     }
 
     public DateTime GetTime()
     {
         return hitTime;
+    }
+
+    public override string ToString()
+    {
+        string s = userID + ", " + hitTime.ToLongTimeString() + "." + hitTime.Millisecond + ", " + type.ToString() + ", ";
+        switch (type)
+        {
+            case MsgType.CONNUPDATE:
+                s += port;
+                break;
+
+            case MsgType.REGISTER:
+                s += name;
+                break;
+        }
+        return s;
+    }
+
+    public static byte[] ObjectToByteArray(Object obj)
+    {
+        BinaryFormatter bf = new BinaryFormatter();
+        using (var ms = new MemoryStream())
+        {
+            bf.Serialize(ms, obj);
+            return ms.ToArray();
+        }
+    }
+
+    public static Message ByteArrayToMessage(byte[] arrBytes)
+    {
+        using (var memStream = new MemoryStream())
+        {
+            var binForm = new BinaryFormatter();
+            memStream.Write(arrBytes, 0, arrBytes.Length);
+            memStream.Seek(0, SeekOrigin.Begin);
+            var obj = binForm.Deserialize(memStream);
+            return (Message)obj;
+        }
     }
 }
